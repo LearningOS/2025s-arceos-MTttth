@@ -1,0 +1,2 @@
+    [92;1mBuilding[0m App: support_hashmap, Arch: riscv64, Platform: riscv64-qemu-virt, App type: rust
+[37mcargo -C exercises/support_hashmap/ build[0m [90m-Z unstable-options --target riscv64gc-unknown-none-elf --target-dir /home/moot/Documents/os/2025s-arceos-MTttth/arceos/target --release  --features "axstd/log-level-warn"[0m

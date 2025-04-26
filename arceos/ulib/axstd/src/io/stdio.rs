@@ -169,15 +169,10 @@ pub fn __print_impl(args: core::fmt::Arguments) {
     if cfg!(feature = "smp") {
         // synchronize using the lock in axlog, to avoid interleaving
         // with kernel logs
-        ax_console_write_bytes(b"\x1b[36m").ok();
-        ax_console_write_fmt(args).ok();
-        ax_console_write_bytes(b"\x1b[0m").ok();
+        ax_console_write_fmt(format_args!("\x1b[36m{}", args)).ok();
     } else {
-        // 单核版本：使用 stdout 输出带颜色内容
         let mut out = stdout().lock();
-        write!(out, "\x1b[36m").ok();
-        out.write_fmt(args).ok();
-        write!(out, "\x1b[0m").ok();
+        out.write_fmt(format_args!("\x1b[36m{}", args)).ok();
     }
 }
 
