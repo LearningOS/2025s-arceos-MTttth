@@ -39,10 +39,15 @@ mod time {
     };
 }
 
+mod misc {
+    pub use axhal::misc::random as ax_random;
+}
+
 pub use self::mem::*;
 pub use self::stdio::*;
 pub use self::task::*;
 pub use self::time::*;
+pub use self::misc::*;
 
 pub use axhal::misc::terminate as ax_terminate;
 pub use axio::PollState as AxPollState;

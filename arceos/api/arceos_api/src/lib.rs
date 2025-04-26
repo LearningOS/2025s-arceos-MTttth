@@ -114,6 +114,13 @@ pub mod stdio {
         pub fn ax_console_write_fmt(args: fmt::Arguments) -> fmt::Result;
     }
 }
+/// MISC
+pub mod misc {
+    define_api! {
+        /// Get a random u128
+        pub fn ax_random() -> u128;
+    }
+}
 
 /// Multi-threading management.
 pub mod task {

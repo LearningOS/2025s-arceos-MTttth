@@ -230,7 +230,8 @@ pub fn print_fmt(args: fmt::Arguments) -> fmt::Result {
     static LOCK: SpinNoIrq<()> = SpinNoIrq::new(());
 
     let _guard = LOCK.lock();
-    Logger.write_fmt(args)
+    Logger.write_fmt(format_args!("\x1b[36m{}\x1b[0m", args)) // 绿色输出
+
 }
 
 #[doc(hidden)]

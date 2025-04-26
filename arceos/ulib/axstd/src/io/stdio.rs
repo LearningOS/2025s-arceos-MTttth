@@ -163,11 +163,21 @@ pub fn stdout() -> Stdout {
 
 #[doc(hidden)]
 pub fn __print_impl(args: core::fmt::Arguments) {
+    use core::fmt::Write;
+    use arceos_api::stdio::{ax_console_write_bytes, ax_console_write_fmt};
+    
     if cfg!(feature = "smp") {
         // synchronize using the lock in axlog, to avoid interleaving
         // with kernel logs
-        arceos_api::stdio::ax_console_write_fmt(args).unwrap();
+        ax_console_write_bytes(b"\x1b[36m").ok();
+        ax_console_write_fmt(args).ok();
+        ax_console_write_bytes(b"\x1b[0m").ok();
     } else {
-        stdout().lock().write_fmt(args).unwrap();
+        // 单核版本：使用 stdout 输出带颜色内容
+        let mut out = stdout().lock();
+        write!(out, "\x1b[36m").ok();
+        out.write_fmt(args).ok();
+        write!(out, "\x1b[0m").ok();
     }
 }
+
