@@ -1,9 +1,11 @@
 use crate::alloc::string::ToString;
+use crate::dir;
 use crate::file::FileNode;
 use alloc::collections::BTreeMap;
+use alloc::format;
 use alloc::sync::{Arc, Weak};
 use alloc::{string::String, vec::Vec};
-use axfs_vfs::{VfsDirEntry, VfsNodeAttr, VfsNodeOps, VfsNodeRef, VfsNodeType};
+use axfs_vfs::{VfsDirEntry, VfsNodeAttr, VfsNodeOps, VfsNodeRef, VfsNodeType, VfsOps};
 use axfs_vfs::{VfsError, VfsResult};
 use log::debug;
 use spin::RwLock;
@@ -11,12 +13,12 @@ use spin::RwLock;
 /// The directory node in the RAM filesystem.
 ///
 /// It implements [`axfs_vfs::VfsNodeOps`].
+
 pub struct DirNode {
     this: Weak<DirNode>,
     parent: RwLock<Weak<dyn VfsNodeOps>>,
     children: RwLock<BTreeMap<String, VfsNodeRef>>,
 }
-
 impl DirNode {
     pub(super) fn new(parent: Option<Weak<dyn VfsNodeOps>>) -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
@@ -51,7 +53,10 @@ impl DirNode {
             VfsNodeType::Dir => Self::new(Some(self.this.clone())),
             _ => return Err(VfsError::Unsupported),
         };
+        debug!("create_node: name = '{}', type = {:?}", name, ty);
+        debug!("create_node: created node ptr = {:p}", Arc::as_ptr(&node));
         self.children.write().insert(name.into(), node);
+
         Ok(())
     }
 
@@ -67,6 +72,41 @@ impl DirNode {
         children.remove(name);
         Ok(())
     }
+    // find root
+    // pub fn find_root(self: &Arc<DirNode>) -> Arc<DirNode> {
+    //     let mut current: Arc<DirNode> = self.clone();
+
+    //     loop {
+    //         // 限定 parent_weak 的作用域，避免借用跨 current 赋值
+    //         let parent_dir_arc_opt = {
+    //             let parent_weak = current.parent.read();
+    //             match parent_weak.upgrade() {
+    //                 Some(parent_arc) => {
+    //                     // parent 是 dyn VfsNodeOps，尝试转换为 DirNode
+    //                     if let Some(parent_dir) = parent_arc.as_any().downcast_ref::<DirNode>() {
+    //                         // 注意 downcast_ref 返回 &DirNode，不是 Arc
+    //                         // 需要从 Weak 升级成 Arc，故先升级 Weak
+    //                         parent_dir.this.upgrade()
+    //                     } else {
+    //                         // 父节点不是 DirNode（比如文件节点），无法继续向上找根，返回当前
+    //                         None
+    //                     }
+    //                 }
+    //                 None => {
+    //                     // 没有父节点，当前就是根节点
+    //                     None
+    //                 }
+    //             }
+    //         };
+    //         if let Some(parent_dir_arc) = parent_dir_arc_opt {
+    //             current = parent_dir_arc;
+    //             continue; // 继续往上找
+    //         } else {
+    //             break;
+    //         }
+    //     }
+    //     current
+    // }
 }
 
 impl VfsNodeOps for DirNode {
@@ -80,20 +120,44 @@ impl VfsNodeOps for DirNode {
 
     fn lookup(self: Arc<Self>, path: &str) -> VfsResult<VfsNodeRef> {
         let (name, rest) = split_path(path);
+        debug!(
+            "lookup: path = '{}', current node = {:p}, name = '{}', rest = {:?}",
+            path,
+            Arc::as_ptr(&self),
+            name,
+            rest
+        );
+
         let node = match name {
-            "" | "." => Ok(self.clone() as VfsNodeRef),
-            ".." => self.parent().ok_or(VfsError::NotFound),
-            _ => self
-                .children
-                .read()
-                .get(name)
-                .cloned()
-                .ok_or(VfsError::NotFound),
+            "" | "." => {
+                debug!("-> current directory");
+                Ok(self.clone() as VfsNodeRef)
+            }
+            ".." => {
+                debug!("-> parent directory");
+                self.parent().ok_or(VfsError::NotFound)
+            }
+            _ => {
+                let children = self.children.read();
+                if let Some(child) = children.get(name) {
+                    debug!(
+                        "-> found child '{}': {:p}",
+                        name,
+                        Arc::as_ptr(&child.clone())
+                    );
+                    Ok(child.clone())
+                } else {
+                    debug!("-> child '{}' not found in current node", name);
+                    Err(VfsError::NotFound)
+                }
+            }
         }?;
 
         if let Some(rest) = rest {
+            debug!("-> descending into '{}'", rest);
             node.lookup(rest)
         } else {
+            debug!("-> final node reached: {:p}", Arc::as_ptr(&node));
             Ok(node)
         }
     }
@@ -165,30 +229,88 @@ impl VfsNodeOps for DirNode {
         }
     }
 
-    fn rename(&self, old: &str, new: &str) -> VfsResult<()> {
-        let (old_dir_path, old_name) = split_parent(old)?;
-        let (new_dir_path, new_name) = split_parent(new)?;
-        // `self` 是 Arc<DirNode> 的话，改为 Arc::new(self) 是不合法的
-        // 所以必须有某个 Arc<DirNode>，假设 `self.this` 是 Weak<DirNode>
-        let root = self.this.upgrade().ok_or(VfsError::NotFound)?;
+    fn rename(&self, old_path: &str, new_path: &str) -> VfsResult<()> {
+        debug!("rename: {} -> {}", old_path, new_path);
 
-        debug!(
-            "old_dir_path is {}, new_dir_path is {}.",
-            old_dir_path, new_dir_path
-        );
+        // 解析 old_path，获得 old_dir_path 和 old_name
+        let (_, old_name) = split_parent(old_path)?;
+        let (_, new_name) = split_parent(new_path)?;
+        // 从 root 开始查找 old_dir
+        let old_dir = self.this.upgrade().ok_or(VfsError::NotFound)?;
 
-        let old_dir = find_dir(&root, old_dir_path).map_err(|e| {
-            debug!("find_dir old_dir_path failed: {:?}", e);
-            e
-        })?;
-        // 从 old_dir 中移除 old_name
-        let mut old_children = old_dir.children.write();
-        let node = old_children.remove(old_name).ok_or(VfsError::NotFound)?;
-        old_children.insert(new_name.to_string(), node);
-        drop(old_children);
-
+        // 移除 old_node
+        let old_node = {
+            let mut old_children = old_dir.children.write();
+            old_children.remove(old_name).ok_or(VfsError::NotFound)?
+        };
+        old_dir.children.write().insert(new_name.to_string(), old_node);
         Ok(())
     }
+    // fn rename(&self, old_path: &str, new_path: &str) -> VfsResult<()> {
+    //     debug!("rename: {} -> {}", old_path, new_path);
+
+    //     // 先获得 root 节点
+    //     let current_dir = self.this.upgrade().ok_or(VfsError::NotFound)?;
+    //     let root = current_dir.find_root();
+    //     let parent_node = self.parent();
+    //     debug!("Root children:");
+    //     for (k, v) in root.children.read().iter() {
+    //         debug!("  {} => {:p}", k, Arc::as_ptr(v));
+    //     }
+    //     debug!(
+    //         "DEBUG Node Info:
+    //         self ptr: {:p}
+    //         root ptr: {:p}
+    //         parent ptr: {}
+    //         ",
+    //         Arc::as_ptr(&current_dir),
+    //         Arc::as_ptr(&root),
+    //         parent_node
+    //             .as_ref()
+    //             .map(|p| format!("{:p}", Arc::as_ptr(p)))
+    //             .unwrap_or_else(|| "None".into())
+    //     );
+    //     // 解析 old_path，获得 old_dir_path 和 old_name
+    //     let (old_dir_path, old_name) = split_parent(old_path)?;
+    //     // 从 root 开始查找 old_dir
+    //     let old_dir_node = current_dir.clone().lookup(old_dir_path)?;
+    //     let old_dir_ref = old_dir_node
+    //         .as_any()
+    //         .downcast_ref::<DirNode>()
+    //         .ok_or(VfsError::NotADirectory)?;
+    //     let old_dir = old_dir_ref.this.upgrade().ok_or(VfsError::NotFound)?;
+    //     // let self_arc = self.this.upgrade().unwrap();
+    //     // debug!("old_dir ptr: {:p}", Arc::as_ptr(&old_dir));
+    //     // debug!("self ptr: {:p}", Arc::as_ptr(&self_arc));
+    //     for name in old_dir.children.read().keys() {
+    //         debug!("child in old_dir: {}", name);
+    //     }
+
+    //     // 移除 old_node
+    //     let old_node = {
+    //         let mut old_children = old_dir.children.write();
+    //         old_children.remove(old_name).ok_or(VfsError::NotFound)?
+    //     };
+    //     // 解析 new_path，获得 new_dir_path 和 new_name
+    //     let (new_dir_path, new_name) = split_parent(new_path)?;
+    //     // 从 root 开始查找 new_dir
+    //     debug!("new_dir_path is {}, new_name is {}", new_dir_path, new_name);
+    //     let new_dir_node = root.clone().lookup(new_dir_path)?;
+    //     let new_dir_ref = new_dir_node
+    //         .as_any()
+    //         .downcast_ref::<DirNode>()
+    //         .ok_or(VfsError::NotADirectory)?;
+    //     let new_dir = new_dir_ref.this.upgrade().ok_or(VfsError::NotFound)?;
+    //     // 插入新节点
+
+    //     let mut new_children = new_dir.children.write();
+    //     if new_children.contains_key(new_name) {
+    //         return Err(VfsError::AlreadyExists);
+    //     }
+    //     new_children.insert(new_name.to_string(), old_node);
+
+    //     Ok(())
+    // }
 
     axfs_vfs::impl_vfs_dir_default! {}
 }
@@ -209,31 +331,4 @@ fn split_parent(path: &str) -> VfsResult<(&str, &str)> {
         None => Err(VfsError::InvalidInput),
         _ => Err(VfsError::InvalidInput),
     }
-}
-
-fn find_dir(root: &Arc<DirNode>, path: &str) -> VfsResult<Arc<DirNode>> {
-    let mut node = Arc::clone(root);
-
-    if path == "/" || path.is_empty() {
-        return Ok(node);
-    }
-
-    for comp in path.trim_matches('/').split('/') {
-        let children = node.children.read();
-        let child = children
-            .get(comp)
-            .cloned() // 复制出 Arc
-            .ok_or(VfsError::NotFound)?;
-        drop(children); // 释放锁，防止死锁或长时间持有
-
-        // 向下转型为 DirNode
-        let dir = child
-            .as_any()
-            .downcast_ref::<DirNode>()
-            .ok_or(VfsError::NotADirectory)?;
-
-        node = dir.this.upgrade().ok_or(VfsError::NotFound)?;
-    }
-
-    Ok(node)
 }

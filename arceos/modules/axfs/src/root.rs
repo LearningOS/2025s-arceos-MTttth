@@ -133,6 +133,7 @@ impl VfsNodeOps for RootDirectory {
     }
 
     fn rename(&self, src_path: &str, dst_path: &str) -> VfsResult {
+        // debug!("src_path is {}, dst_path is {}.", src_path, dst_path);
         self.lookup_mounted_fs(src_path, |fs, rest_path| {
             if rest_path.is_empty() {
                 ax_err!(PermissionDenied) // cannot rename mount points
