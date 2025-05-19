@@ -96,6 +96,7 @@ fn vmexit_handler(ctx: &mut VmCpuRegisters) -> bool {
                     }
                     SbiMessage::PutChar(ch) => {
                         ax_print!("{}", ch as u8 as char); // 打印字符
+                        ctx.guest_regs.sepc += 4;
                         return true;
                     }
                     _ => {
@@ -127,10 +128,9 @@ fn vmexit_handler(ctx: &mut VmCpuRegisters) -> bool {
                 ctx.guest_regs.sepc,
                 stval::read()
             );
-            return false;
         }
     }
-    
+    false
 }
 
 fn prepare_guest_context(ctx: &mut VmCpuRegisters) {
