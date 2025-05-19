@@ -45,7 +45,7 @@ fn main() {
     // Let's kick off the user process.
     let user_task = task::spawn_user_task(
         Arc::new(Mutex::new(uspace)),
-        UspaceContext::new(entry, ustack_top),
+        Uspahandle_syscallceContext::new(entry, ustack_top),
     );
 
     // Wait for user process to exit ...
