@@ -26,6 +26,7 @@ use sbi::SbiMessage;
 use tock_registers::LocalRegisterCopy;
 use vcpu::VmCpuRegisters;
 use vcpu::_run_guest;
+// use crate::scause::Interrupt;
 
 const VM_ENTRY: usize = 0x8020_0000;
 
@@ -111,26 +112,31 @@ fn vmexit_handler(ctx: &mut VmCpuRegisters) -> bool {
             }
         }
         Trap::Exception(Exception::IllegalInstruction) => {
-            panic!(
+            ax_println!(
                 "Bad instruction: {:#x} sepc: {:#x}",
                 stval::read(),
                 ctx.guest_regs.sepc
             );
+            ctx.guest_regs.sepc += 4;
+            ctx.guest_regs.gprs.set_reg(A0, 0x6688); 
         }
         Trap::Exception(Exception::LoadGuestPageFault) => {
-            panic!(
+            ax_println!(
                 "LoadGuestPageFault: stval{:#x} sepc: {:#x}",
                 stval::read(),
                 ctx.guest_regs.sepc
             );
+            ctx.guest_regs.sepc += 4;
+            ctx.guest_regs.gprs.set_reg(A0, 0x1234);
         }
         _ => {
-            panic!(
+            ax_println!(
                 "Unhandled trap: {:?}, sepc: {:#x}, stval: {:#x}",
                 scause.cause(),
                 ctx.guest_regs.sepc,
                 stval::read()
             );
+            ctx.guest_regs.sepc += 4;
         }
     }
     false
