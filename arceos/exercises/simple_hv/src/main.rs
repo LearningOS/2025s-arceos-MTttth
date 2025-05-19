@@ -91,16 +91,19 @@ fn vmexit_handler(ctx: &mut VmCpuRegisters) -> bool {
                         ax_println!("a0 = {:#x}, a1 = {:#x}", a0, a1);
                         assert_eq!(a0, 0x6688);
                         assert_eq!(a1, 0x1234);
+                        ctx.guest_regs.sepc += 4;
                         ax_println!("Shutdown vm normally!");
                         return true;
                     }
                     SbiMessage::PutChar(ch) => {
                         ax_print!("{}", ch as u8 as char); // 打印字符
                         ctx.guest_regs.sepc += 4;
-                        return true;
+                        return false;
                     }
                     _ => {
-                        panic!("Unhandled SBI message: {:?}", msg);
+                        // panic!("Unhandled SBI message: {:?}", msg);
+                        ctx.guest_regs.sepc += 4;
+                        return false;
                     }
                 }
             } else {
